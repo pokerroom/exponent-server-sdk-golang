@@ -1,6 +1,7 @@
 package expo
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -12,7 +13,7 @@ type ExponentPushToken string
 // ErrMalformedToken is returned if a token does not start with 'ExponentPushToken'
 var ErrMalformedToken = errors.New("Token should start with ExponentPushToken")
 
-//NewExponentPushToken returns a token and may return an error if the input token is invalid
+// NewExponentPushToken returns a token and may return an error if the input token is invalid
 func NewExponentPushToken(token string) (ExponentPushToken, error) {
 	if !strings.HasPrefix(token, "ExponentPushToken") {
 		return "", ErrMalformedToken
@@ -31,26 +32,17 @@ const (
 
 // PushMessage is an object that describes a push notification request.
 // Fields:
-//	To: an ExponentPushToken
-//	Data: A dict of extra data to pass inside of the push notification.
-//	      The total notification payload must be at most 4096 bytes.
-//	Title: The title to display in the notification. On iOS, this is
-//	       displayed only on Apple Watch.
-//	Body: The message to display in the notification.
-//	Sound: A sound to play when the recipient receives this
-//	       notification. Specify "default" to play the device's default
-//	       notification sound, or omit this field to play no sound.
-//	TTLSeconds: The number of seconds for which the message may be kept around
-//	     for redelivery if it hasn't been delivered yet. Defaults to 0.
-//	Expiration: UNIX timestamp for when this message expires. It has
-//	        the same effect as ttl, and is just an absolute timestamp
-//	        instead of a relative one.
-//	Priority: Delivery priority of the message. Use the *Priority constants
-//          specified above.
-//	Badge: An integer representing the unread notification count. This
-//	       currently only affects iOS. Specify 0 to clear the badge count.
-//	ChannelID: ID of the Notification Channel through which to display this
-//         notification on Android devices.
+//
+// To: an ExponentPushToken
+// Data: A dict of extra data to pass inside of the push notification. The total notification payload must be at most 4096 bytes.
+// Title: The title to display in the notification. On iOS, this is displayed only on Apple Watch.
+// Body: The message to display in the notification.
+// Sound: A sound to play when the recipient receives this notification. Specify "default" to play the device's default notification sound, or omit this field to play no sound.
+// TTLSeconds: The number of seconds for which the message may be kept around for redelivery if it hasn't been delivered yet. Defaults to 0.
+// Expiration: UNIX timestamp for when this message expires. It has the same effect as ttl, and is just an absolute timestamp instead of a relative one.
+// Priority: Delivery priority of the message. Use the *Priority constants specified above.
+// Badge: An integer representing the unread notification count. This currently only affects iOS. Specify 0 to clear the badge count.
+// ChannelID: ID of the Notification Channel through which to display this notification on Android devices.
 type PushMessage struct {
 	To         []ExponentPushToken `json:"to"`
 	Body       string              `json:"body"`
@@ -82,18 +74,24 @@ const ErrorMessageTooBig = "MessageTooBig"
 // ErrorMessageRateExceeded indicates messages have been sent too frequently
 const ErrorMessageRateExceeded = "MessageRateExceeded"
 
+// ErrorProviderError indicates the provider (FCM or APNs) respond error
+const ErrorProviderError = "ProviderError"
+
 // PushResponse is a wrapper class for a push notification response.
 // A successful single push notification:
-//     {'status': 'ok'}
+//
+//	{'status': 'ok'}
+//
 // An invalid push token
-//     {'status': 'error',
-//      'message': '"adsf" is not a registered push notification recipient'}
+//
+//	{'status': 'error',
+//	 'message': '"adsf" is not a registered push notification recipient'}
 type PushResponse struct {
 	PushMessage PushMessage
-	ID			string			  `json:"id"`
-	Status      string            `json:"status"`
-	Message     string            `json:"message"`
-	Details     map[string]string `json:"details"`
+	ID          string                     `json:"id"`
+	Status      string                     `json:"status"`
+	Message     string                     `json:"message"`
+	Details     map[string]json.RawMessage `json:"details"`
 }
 
 func (r *PushResponse) isSuccess() bool {
@@ -113,16 +111,20 @@ func (r *PushResponse) ValidateResponse() error {
 	// Handle specific errors if we have information
 	if r.Details != nil {
 		e := r.Details["error"]
-		if e == ErrorDeviceNotRegistered {
+		if string(e) == ErrorDeviceNotRegistered {
 			return &DeviceNotRegisteredError{
 				PushResponseError: *err,
 			}
-		} else if e == ErrorMessageTooBig {
+		} else if string(e) == ErrorMessageTooBig {
 			return &MessageTooBigError{
 				PushResponseError: *err,
 			}
-		} else if e == ErrorMessageRateExceeded {
+		} else if string(e) == ErrorMessageRateExceeded {
 			return &MessageRateExceededError{
+				PushResponseError: *err,
+			}
+		} else if string(e) == ErrorProviderError {
+			return &ProviderError{
 				PushResponseError: *err,
 			}
 		}
@@ -160,14 +162,22 @@ type MessageRateExceededError struct {
 	PushResponseError
 }
 
+// ProviderError is raised when the provider (FCM or APNs) respond error
+// On Android, error message is json string. for example: {"fcm":{"error":"MismatchSenderId"}}
+type ProviderError struct {
+	PushResponseError
+}
+
 // PushServerError is raised when the push token server is not behaving as expected
 // For example, invalid push notification arguments result in a different
 // style of error. Instead of a "data" array containing errors per
 // notification, an "error" array is returned.
 // {"errors": [
-//   {"code": "API_ERROR",
-//    "message": "child \"to\" fails because [\"to\" must be a string]. \"value\" must be an array."
-//   }
+//
+//	{"code": "API_ERROR",
+//	 "message": "child \"to\" fails because [\"to\" must be a string]. \"value\" must be an array."
+//	}
+//
 // ]}
 type PushServerError struct {
 	Message      string
